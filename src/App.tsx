@@ -28,9 +28,25 @@ export default function App() {
   const [llcId, setLlcId] = useState<string | null>(localStorage.getItem('llcId'));
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setLoading(false);
+      
+      if (u) {
+         const ref = localStorage.getItem('referralCode');
+         if (ref && !localStorage.getItem('referralRedeemed')) {
+             try {
+                 const token = await u.getIdToken();
+                 fetch('/api/referrals/redeem', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ code: ref, email: u.email })
+                 }).then(() => {
+                    localStorage.setItem('referralRedeemed', 'true');
+                 });
+             } catch(e) {}
+         }
+      }
     });
     return () => unsubscribe();
   }, []);

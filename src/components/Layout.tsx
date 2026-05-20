@@ -97,8 +97,35 @@ export function Layout({ children, currentView, setView, user }: LayoutProps) {
         </div>
       </aside>
 
+      {/* Bottom Mobile Navigation */}
+      {user && (
+        <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#E4E3E0] border-t border-[#141414] flex items-center justify-around pb-safe">
+            {navItems.slice(0, 4).map((item) => {
+              const Icon = item.icon;
+              const isActive = currentView === item.id;
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setView(item.id)}
+                  className={`flex flex-col items-center justify-center p-3 w-full ${isActive ? 'text-[#141414]' : 'text-[#141414]/40'} transition-colors`}
+                >
+                  <Icon size={20} className="mb-1" />
+                  <span className="text-[9px] uppercase tracking-wider font-bold">{item.label}</span>
+                </button>
+              );
+            })}
+            <button
+               onClick={() => setView('settings')}
+               className={`flex flex-col items-center justify-center p-3 w-full ${currentView === 'settings' ? 'text-[#141414]' : 'text-[#141414]/40'} transition-colors`}
+            >
+              <Settings size={20} className="mb-1" />
+              <span className="text-[9px] uppercase tracking-wider font-bold">Settings</span>
+            </button>
+        </div>
+      )}
+
       {/* Main Content */}
-      <main className="flex-1 overflow-auto bg-[#F0EFEC]">
+      <main className="flex-1 overflow-auto bg-[#F0EFEC] pb-24 md:pb-0">
         {children}
       </main>
     </div>

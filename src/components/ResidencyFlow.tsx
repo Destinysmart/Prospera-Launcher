@@ -22,19 +22,21 @@ export function ResidencyFlow({ onComplete, user }: { onComplete: (id: string) =
           return;
         }
 
-        const res = await fetch(`/api/residents/${user.uid}/prospera_status`);
+        const token = await user.getIdToken();
+        const res = await fetch(`/api/residents/${user.uid}/prospera_status`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
         const data = await res.json();
         
         if (data.active) {
           try {
-             await updateDoc(doc(db, 'residents', user.uid), {
-                status: 'active',
-                prosperaData: data.data || null
-             });
              // Only send email if we actually did the update (meaning it wasn't already active in DB)
              fetch(`/api/email/send`, {
                method: 'POST',
-               headers: {'Content-Type': 'application/json'},
+               headers: {
+                 'Content-Type': 'application/json',
+                 'Authorization': `Bearer ${token}`
+               },
                body: JSON.stringify({
                  to: user.email,
                  subject: 'Próspera e-Residency Approved!',
@@ -63,19 +65,21 @@ export function ResidencyFlow({ onComplete, user }: { onComplete: (id: string) =
     if (step === 'review') {
       interval = setInterval(async () => {
         try {
-          const res = await fetch(`/api/residents/${user.uid}/prospera_status`);
+          const token = await user.getIdToken();
+          const res = await fetch(`/api/residents/${user.uid}/prospera_status`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
           const data = await res.json();
           if (data.active) {
             const { updateDoc, doc } = await import('firebase/firestore');
             const { db } = await import('../services/firebase');
             try {
-               await updateDoc(doc(db, 'residents', user.uid), {
-                  status: 'active',
-                  prosperaData: data.data || null
-               });
                fetch(`/api/email/send`, {
                  method: 'POST',
-                 headers: {'Content-Type': 'application/json'},
+                 headers: {
+                   'Content-Type': 'application/json',
+                   'Authorization': `Bearer ${token}`
+                 },
                  body: JSON.stringify({
                    to: user.email,
                    subject: 'Próspera e-Residency Approved!',
@@ -93,7 +97,7 @@ export function ResidencyFlow({ onComplete, user }: { onComplete: (id: string) =
         } catch (e) {
           console.error("Failed to poll residency status", e);
         }
-      }, 30000); // Polling every 30 seconds
+      }, 300000); // Polling every 5 minutes
     }
     return () => clearInterval(interval);
   }, [step, onComplete, user.uid, user.email]);

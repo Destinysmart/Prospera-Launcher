@@ -47,19 +47,30 @@ export function Invoices({ user, llcId }: InvoicesProps) {
     // Btc Price & Corporate Wallet 
     const fetchContext = async () => {
         try {
-            const resPrice = await fetch('/api/btc-price');
+            const queryPrice = `query { realtimePrice { btcSatPrice { base offset } } }`;
+            const resPrice = await fetch('https://api.blink.sv/graphql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: queryPrice })
+             });
             const dataPrice = await resPrice.json();
-            if (dataPrice.btcSatPrice) setBtcPrice(dataPrice.btcSatPrice);
+            if (dataPrice?.data?.realtimePrice?.btcSatPrice) setBtcPrice(dataPrice.data.realtimePrice.btcSatPrice);
             
             const userDocSnap = await getDoc(doc(db, 'users', user.uid));
             const userData = userDocSnap.data();
-            const encryptedKey = userData?.blink_api_key ? `?encryptedKey=${encodeURIComponent(userData.blink_api_key)}` : '';
+            const apiKey = userData?.blink_api_key;
             
-            const resWallet = await fetch(`/api/wallets/balances${encryptedKey}`);
-            const walletData = await resWallet.json();
-            if (walletData.connected) {
-                // If it's connected, simulate LN address
-                setLightningAddress('pay@blink.sv'); // You'd need a real LN address lookup
+            if (apiKey) {
+                const queryWallet = `query { me { defaultAccount { wallets { id walletCurrency balance } } } }`;
+                const resWallet = await fetch('https://api.blink.sv/graphql', {
+                    method: 'POST',
+                    headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: queryWallet })
+                });
+                const walletData = await resWallet.json();
+                if (walletData?.data?.me?.defaultAccount) {
+                    setLightningAddress('pay@blink.sv'); // Simulated
+                }
             }
         } catch(e) {}
     };
@@ -104,9 +115,13 @@ export function Invoices({ user, llcId }: InvoicesProps) {
      };
      
      try {
+       const token = await user.getIdToken();
        const response = await fetch('/api/invoices/generate-pdf', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify(payload)
        });
        

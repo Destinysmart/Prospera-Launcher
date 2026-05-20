@@ -22,6 +22,25 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
   const [signatureUrl, setSignatureUrl] = useState<string | null>(null);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [residentStatus, setResidentStatus] = useState<string | null>('loading');
+
+  useEffect(() => {
+    const checkResidentStatus = async () => {
+      try {
+        const { getDoc, doc } = await import('firebase/firestore');
+        const { db } = await import('../services/firebase');
+        const docSnap = await getDoc(doc(db, 'residents', user.uid));
+        if (docSnap.exists()) {
+           setResidentStatus(docSnap.data().status);
+        } else {
+           setResidentStatus('none');
+        }
+      } catch(e) {
+        setResidentStatus('unknown');
+      }
+    };
+    checkResidentStatus();
+  }, [user.uid]);
 
   // Debounced search
   useEffect(() => {
@@ -33,9 +52,13 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
     setNameChecking(true);
     const delay = setTimeout(async () => {
       try {
+        const token = await user.getIdToken();
         const res = await fetch('/api/prospera/search-entity', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
           body: JSON.stringify({ query: formData.companyName })
         });
         const data = await res.json();
@@ -65,9 +88,13 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
     }
 
     try {
+      const token = await user.getIdToken();
       const res = await fetch('/api/llc/submit', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({ llcData: formData, amount: 150000 }),
       });
       const data = await res.json();
@@ -111,9 +138,13 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
   const handleCheckout = async (id: string, appId?: string) => {
      setErrorMsg(null);
      try {
+       const token = await user.getIdToken();
        const res = await fetch(`/api/llc/checkout`, { 
          method: 'POST',
-         headers: { 'Content-Type': 'application/json' },
+         headers: { 
+           'Content-Type': 'application/json',
+           'Authorization': `Bearer ${token}`
+         },
          body: JSON.stringify({ applicationId: appId }),
        });
        const data = await res.json();
@@ -197,6 +228,33 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
         </div>
      );
   };
+
+  if (residentStatus === 'loading') {
+    return (
+      <div className="max-w-2xl mx-auto py-12 text-center text-[#141414]/50 font-mono uppercase text-sm">
+        Checking e-Residency status...
+      </div>
+    );
+  }
+
+  if (residentStatus !== 'active') {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="border border-[#141414] bg-white p-8 text-center flex flex-col items-center">
+          <div className="p-4 bg-yellow-100 text-yellow-800 rounded-full mb-6">
+            <Building2 size={32} />
+          </div>
+          <h2 className="text-2xl font-bold uppercase tracking-tighter mb-4">LLC Formation Locked</h2>
+          <p className="text-[#141414]/80 max-w-md mx-auto font-mono text-sm leading-relaxed mb-6">
+            Your e-Residency application is currently under review by Próspera. LLC formation will be available once your residency is approved. You will receive an email notification when this changes.
+          </p>
+          <button onClick={() => onComplete('')} className="text-xs uppercase font-bold tracking-widest text-[#141414]/50 hover:text-[#141414] transition-colors border-b border-transparent hover:border-[#141414]">
+             Return to Dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -329,44 +387,24 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
             exit={{ opacity: 0, scale: 1.05 }}
             className="border border-[#141414] bg-white text-[#141414] p-8 text-center"
           >
-             {invoice?.checkoutUrl ? (
-                <div className="py-8">
-                   <h2 className="text-2xl font-bold uppercase tracking-tight mb-4">Complete Fiat Payment</h2>
-                   <p className="mb-6 opacity-80 text-sm font-mono max-w-sm mx-auto">Please proceed to secure fiat checkout via Stripe. Your session has been opened in a new tab.</p>
-                   <a href={invoice.checkoutUrl} className="inline-block bg-[#141414] text-white px-6 py-4 font-bold uppercase tracking-widest hover:bg-black transition-colors" target="_blank" rel="noreferrer">
-                      Open Checkout Again
-                   </a>
+             <div className="py-8">
+                <h2 className="text-2xl font-bold uppercase tracking-tight mb-4">Complete Payment</h2>
+                <div className="mb-6 opacity-80 text-sm font-mono max-w-sm mx-auto space-y-2">
+                   <p>Please proceed to the secure Próspera checkout.</p>
+                   <p className="text-xs">Payment options: Lightning, On-Chain Bitcoin, and Credit Card.</p>
                 </div>
-             ) : (
-                <div className="py-8">
-                   <h2 className="text-2xl font-bold uppercase tracking-tight mb-2">Lightning Payment</h2>
-                   <p className="text-sm opacity-60 mb-8 font-mono tracking-tight uppercase">Scan with any Lightning wallet to pay. Payment is automatically detected.</p>
-                   
-                   {qrCodeDataUrl ? (
-                     <div className="mb-6 flex flex-col items-center">
-                        <div className="inline-block p-4 bg-white mb-6 border border-gray-200 shadow-sm">
-                          <img src={qrCodeDataUrl} alt="Lightning Invoice QR Code" className="w-48 h-48" />
-                        </div>
-                        <div className="bg-gray-100 p-4 rounded flex items-center justify-between gap-4 overflow-hidden max-w-sm w-full mx-auto border border-gray-200">
-                          <div className="truncate font-mono text-[10px] opacity-80">{invoice.bolt11 || invoice.invoice}</div>
-                          <button onClick={() => navigator.clipboard.writeText(invoice.bolt11 || invoice.invoice)} className="shrink-0 hover:text-black hover:bg-gray-200 p-2 rounded transition-colors">
-                            <Copy size={16} />
-                          </button>
-                        </div>
-                        
-                        <div className="mt-8 flex items-center justify-center gap-4 text-xs font-mono uppercase opacity-50">
-                           <div className="animate-spin h-3 w-3 border-2 border-black border-t-transparent rounded-full"></div>
-                           <span>Waiting for payment confirmation...</span>
-                        </div>
-                     </div>
-                   ) : (
-                     <div className="flex items-center justify-center gap-4 text-xs font-mono uppercase opacity-50">
-                       <div className="animate-spin h-3 w-3 border-2 border-[#141414] border-t-transparent rounded-full"></div>
-                       <span>Generating invoice...</span>
-                     </div>
-                   )}
-                </div>
-             )}
+                
+                {invoice?.checkoutUrl ? (
+                  <a href={invoice.checkoutUrl} className="inline-block bg-[#141414] text-white px-6 py-4 font-bold uppercase tracking-widest hover:bg-black transition-colors" target="_blank" rel="noreferrer">
+                     Open Checkout
+                  </a>
+                ) : (
+                  <div className="flex items-center justify-center gap-3 text-xs font-mono uppercase opacity-50">
+                    <div className="animate-spin h-3 w-3 border-2 border-black border-t-transparent rounded-full"></div>
+                    <span>Initializing checkout...</span>
+                  </div>
+                )}
+             </div>
           </motion.div>
         )}
 

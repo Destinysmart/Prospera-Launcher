@@ -1,8 +1,108 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // 0. Global Safety Net
     match /{document=**} {
-      allow read, write: if request.auth != null;
+      allow read, write: if false;
+    }
+
+    // --- PRIMITIVES ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(data) {
+      return isSignedIn() && data.ownerId == request.auth.uid;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // --- VALIDATION HELPERS ---
+
+    function isValidResident(data) {
+      return data.keys().hasAll(['id', 'ownerId'])
+        && data.id is string && data.id.size() <= 64
+        && data.ownerId == request.auth.uid;
+    }
+
+    function isValidEntity(data) {
+      return data.keys().hasAll(['id', 'ownerId'])
+        && data.id is string && data.id.size() <= 64
+        && data.ownerId == request.auth.uid;
+    }
+
+    // --- COLLECTIONS ---
+
+    match /residents/{residentId} {
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+      
+      allow create: if isVerified() 
+        && isValidId(residentId)
+        && residentId == incoming().id
+        && isValidResident(incoming())
+        && incoming().status == 'pending';
+
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        (isOwner(existing()) && isValidResident(incoming()))
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    match /corporate_entities/{entityId} {
+      allow get: if isOwner(existing()) || isAdmin();
+      allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
+
+      allow create: if isVerified()
+        && isValidId(entityId)
+        && entityId == incoming().id
+        && isValidEntity(incoming());
+
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (isOwner(existing()) && isValidEntity(incoming()))
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn() && request.auth.uid == adminId;
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /webhooks/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /invoices_history/{invoiceId} {
+      allow read: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if isSignedIn() && request.auth.uid == incoming().ownerId;
     }
   }
 }

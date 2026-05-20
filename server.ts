@@ -6,18 +6,47 @@ import { v4 as uuidv4 } from 'uuid';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
+import * as admin from 'firebase-admin';
+import firebaseConfig from './firebase-applet-config.json';
+import { Webhook } from 'svix';
 
 dotenv.config();
 
 console.log("Starting server.ts...");
 
+try {
+  admin.initializeApp({
+    projectId: firebaseConfig.projectId
+  });
+  console.log("Firebase Admin initialized");
+} catch(e) {
+  console.error("Firebase Admin initialization error:", e);
+}
+
 const app = express();
-app.use(cors());
+// Restrict CORS or use a basic allowlist, although we serve on the same origin typically.
+app.use(cors({ origin: [/.*\.google\.com$/, /.*\.run\.app$/, 'http://localhost:3000'] }));
 app.use(express.json({
   verify: (req: any, res, buf) => {
     req.rawBody = buf.toString();
   }
 }));
+
+const requireAuth = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+  }
+  const token = authHeader.split('Bearer ')[1];
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    (req as any).user = decodedToken;
+    next();
+  } catch (error) {
+    console.error("Auth middleware error:", error);
+    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+  }
+};
 
 const PORT = 3000;
 
@@ -82,12 +111,10 @@ async function sendEmailNotification(to: string, subject: string, text: string) 
   }
 }
 
-import { Webhook } from 'svix';
+
 
 import PDFDocument from 'pdfkit';
-
-// --- INVOICES GENERATOR --
-app.post('/api/invoices/generate-pdf', async (req, res) => {
+app.post('/api/invoices/generate-pdf', requireAuth, async (req, res) => {
   try {
      const {
         clientName,
@@ -165,36 +192,22 @@ app.post('/api/invoices/generate-pdf', async (req, res) => {
 // --- PRÓSPERA PAYMENT HANDLER ---
 async function handleProsperaPayment(applicationId: string) {
   try {
-      const checkoutResp = await fetchFromProspera(`/legal_entity_applications/${applicationId}/checkout_session`, 'POST', {
-         paymentProvider: "lightning_blink",
-         redirectUrl: `${process.env.APP_URL || 'http://localhost:3000'}/callback`
-      });
-      
-      console.log("[DEBUG] checkoutResp from Próspera for lightning_blink:", checkoutResp);
-      
-      const dataObject = checkoutResp?.data || checkoutResp;
-      const bolt11 = dataObject?.invoice || dataObject?.paymentRequest || dataObject?.bolt11 || dataObject?.checkoutUrl; 
-      let actualBolt11 = bolt11;
-      if (typeof bolt11 === 'string' && bolt11.startsWith('lightning:')) { actualBolt11 = bolt11.replace('lightning:', ''); }
-      
-      if (typeof actualBolt11 === 'string' && actualBolt11.toLowerCase().startsWith('lnbc')) {
-          return { status: 'pending', bolt11: actualBolt11 };
-      }
-      
-      if (typeof actualBolt11 === 'string' && actualBolt11.startsWith('http')) {
-          return { status: 'pending_url', checkoutUrl: actualBolt11 };
-      }
-      
-      throw new Error(`No BOLT11 returned from lightning_blink provider. Received: ${JSON.stringify(checkoutResp)}`);
-  } catch (e: any) {
-      console.error("Lightning checkout failed, falling back to Stripe:", e.message);
-      const stripeResp = await fetchFromProspera(`/legal_entity_applications/${applicationId}/checkout_session`, 'POST', {
+      const resp = await fetchFromProspera(`/legal_entity_applications/${applicationId}/checkout_session`, 'POST', {
           paymentProvider: "stripe",
           redirectUrl: `${process.env.APP_URL || 'http://localhost:3000'}/callback`
       });
       
-      const stripeData = stripeResp?.data || stripeResp;
-      return { status: 'pending_stripe', checkoutUrl: stripeData?.checkoutUrl || stripeData?.url || stripeData?.paymentRequest };
+      const dataObject = resp?.data || resp;
+      const url = dataObject?.checkoutUrl || dataObject?.url || dataObject?.paymentRequest;
+      
+      if (url && typeof url === 'string') {
+          return { status: 'pending_url', checkoutUrl: url };
+      }
+      
+      throw new Error(`No checkout URL returned. Received: ${JSON.stringify(resp)}`);
+  } catch (e: any) {
+      console.error("Checkout session failed:", e.message);
+      throw e;
   }
 }
 
@@ -204,7 +217,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.post('/api/prospera/search-entity', async (req, res) => {
+app.post('/api/prospera/search-entity', requireAuth, async (req, res) => {
   try {
     const data = await fetchFromProspera('/registries/legal_entities/search', 'POST', req.body);
     res.json(data || { data: { matches: [] } });
@@ -214,7 +227,7 @@ app.post('/api/prospera/search-entity', async (req, res) => {
 });
 
 // LLC - Submit
-app.post('/api/llc/submit', async (req, res) => {
+app.post('/api/llc/submit', requireAuth, async (req, res) => {
   const { llcData, amount } = req.body;
 
   try {
@@ -241,7 +254,7 @@ app.post('/api/llc/submit', async (req, res) => {
   }
 });
 
-app.post('/api/llc/checkout', async (req, res) => {
+app.post('/api/llc/checkout', requireAuth, async (req, res) => {
    const { applicationId } = req.body;
    
    try {
@@ -259,10 +272,25 @@ app.post('/api/llc/checkout', async (req, res) => {
 });
 
 // Residents Status - Polling Próspera API
-app.get('/api/residents/:id/prospera_status', async (req, res) => {
+app.get('/api/residents/:uid/prospera_status', requireAuth, async (req, res) => {
   try {
+      const uid = req.params.uid;
       const data = await fetchFromProspera('/me/natural-person');
       const isActive = data !== null && !!data.residentPermitNumber;
+      
+      if (isActive) {
+          try {
+              await admin.firestore().collection('residents').doc(uid).set({
+                  id: uid,
+                  status: 'active',
+                  prosperaData: data || null,
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp()
+              }, { merge: true });
+          } catch(e) {
+              console.error("Failed to sync resident status to firestore from backend:", e);
+          }
+      }
+      
       return res.json({ active: isActive, data });
   } catch (e: any) {
       return res.json({ active: false, data: null, message: e.message });
@@ -270,7 +298,7 @@ app.get('/api/residents/:id/prospera_status', async (req, res) => {
 });
 
 // Email endpoint that clients can call
-app.post('/api/email/send', async (req, res) => {
+app.post('/api/email/send', requireAuth, async (req, res) => {
   const { to, subject, text } = req.body;
   if (!to || !transporter) return res.json({ success: false });
   try {
@@ -293,17 +321,18 @@ app.post('/api/webhooks/blink', async (req: any, res) => {
   const payloadString = req.rawBody;
   const svixHeaders = req.headers;
   
-  const webhook = new Webhook(process.env.BLINK_WEBHOOK_SECRET || 'secret');
+  if (!process.env.BLINK_WEBHOOK_SECRET) {
+      console.warn("Webhook received but BLINK_WEBHOOK_SECRET is missing. Rejecting.");
+      return res.status(400).json({ error: "Webhook secret not configured" });
+  }
+  
+  const webhook = new Webhook(process.env.BLINK_WEBHOOK_SECRET);
   let evt: any;
   try {
      evt = webhook.verify(payloadString, svixHeaders as any);
   } catch (err) {
-     if (process.env.BLINK_WEBHOOK_SECRET) {
-         console.error("Svix verification failed");
-         return res.status(400).json({ error: "Invalid signature" });
-     }
-     console.warn("Svix verification bypassed for development mode (missing BLINK_WEBHOOK_SECRET)");
-     evt = { data: req.body }; // fallback 
+     console.error("Svix verification failed");
+     return res.status(400).json({ error: "Invalid signature" });
   }
 
   // Webhooks from Blink would be processed here and we'd usually use Admin SDK.
@@ -321,12 +350,37 @@ app.post('/api/entities/:id/auto-approve', (req, res) => {
   res.json({ status: 'approved' });
 });
 
-app.get('/api/tax/periods', (req, res) => {
-  if (!FEATURE_TAX_API) {
-    return res.status(501).json({ error: 'Coming after legal review (Statute 7)' });
+app.post('/api/referrals/redeem', requireAuth, async (req, res) => {
+  const { code, email } = req.body;
+  const uid = (req as any).user.uid;
+  try {
+    const residentsSnapshot = await admin.firestore().collection('residents').get();
+    let referrerId = null;
+    for (const doc of residentsSnapshot.docs) {
+       const resId = doc.id;
+       if (`ZEDE-${resId.substring(0, 6).toUpperCase()}` === code) {
+          referrerId = doc.data().ownerId;
+          break;
+       }
+    }
+    
+    if (referrerId) {
+       await admin.firestore().collection('referrals').add({
+          referral_code: code,
+          referred_user_email: email,
+          referred_user_id: uid,
+          referrer_id: referrerId,
+          coupon_assigned: false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp()
+       });
+       return res.json({ success: true });
+    }
+    return res.json({ success: false, reason: 'referrer_not_found' });
+  } catch(e) {
+    return res.status(500).json({ error: 'failed' });
   }
-  res.json({ periods: [] });
 });
+
 
 app.delete('/api/entities/:id', (req, res) => {
   if (!FEATURE_DISSOLUTION) {

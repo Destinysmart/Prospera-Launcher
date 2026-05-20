@@ -104,19 +104,13 @@ export function Settings({ user, residentId }: SettingsProps) {
   const handleDisconnectWallet = async () => {
     if (!window.confirm("Are you sure you want to disconnect your Blink treasury?")) return;
     try {
-       await fetch('/api/wallets/disconnect-corporate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: user.uid })
-       });
-       
        const { updateDoc, doc, deleteField } = await import('firebase/firestore');
        const { db } = await import('../services/firebase');
        await updateDoc(doc(db, 'users', user.uid), {
           blink_api_key: deleteField(),
           blink_btc_wallet_id: deleteField(),
           blink_usd_wallet_id: deleteField(),
-          blink_connected: false,
+          blink_connected: deleteField(),
           blink_connected_at: deleteField()
        });
 
@@ -131,26 +125,58 @@ export function Settings({ user, residentId }: SettingsProps) {
     if (!blinkApiKey) return;
     setSaving(true);
     try {
-      const res = await fetch('/api/wallets/connect-corporate', {
+      const query = `
+        query {
+          me {
+            defaultAccount {
+              wallets {
+                id
+                walletCurrency
+              }
+            }
+          }
+        }
+      `;
+      const res = await fetch('https://api.blink.sv/graphql', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: blinkApiKey, userId: user.uid })
+        headers: {
+          'X-API-KEY': blinkApiKey,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ query })
       });
       if (res.ok) {
-        const { data } = await res.json();
-        
-        const { setDoc, doc } = await import('firebase/firestore');
+        const data = await res.json();
+        if (data?.errors) {
+            alert(data.errors[0]?.message || 'Could not connect workspace wallet.');
+            setSaving(false);
+            return;
+        }
+        const wallets = data?.data?.me?.defaultAccount?.wallets || [];
+        const btcWallet = wallets.find((w: any) => w.walletCurrency === 'BTC');
+        const usdWallet = wallets.find((w: any) => w.walletCurrency === 'USD');
+
+        if (!btcWallet || !usdWallet) {
+          alert('Could not find BTC and USD wallets for this API key.');
+          setSaving(false);
+          return;
+        }
+
+        const { updateDoc, doc } = await import('firebase/firestore');
         const { db } = await import('../services/firebase');
-        await setDoc(doc(db, 'users', user.uid), {
-           ...data
-        }, { merge: true });
+        await updateDoc(doc(db, 'users', user.uid), {
+           blink_api_key: blinkApiKey,
+           blink_btc_wallet_id: btcWallet.id,
+           blink_usd_wallet_id: usdWallet.id,
+           blink_connected: true,
+           blink_connected_at: Date.now()
+        });
 
         setBlinkConnected(true);
         setBlinkApiKey('');
         showSaved();
       } else {
-        const err = await res.json();
-        alert(err.error || 'Could not connect workspace wallet.');
+        alert('Could not connect workspace wallet.');
       }
     } catch(e) {
       console.error(e);

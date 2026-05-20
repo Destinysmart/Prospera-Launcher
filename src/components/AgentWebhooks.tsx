@@ -10,11 +10,9 @@ export function AgentWebhooks({ user }: { user: User }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await fetch('/api/webhooks/agent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, events }),
-      });
+      const { setDoc, doc } = await import('firebase/firestore');
+      const { db } = await import('../services/firebase');
+      await setDoc(doc(db, 'webhooks', user.uid), { url, events, createdAt: Date.now() }, { merge: true });
       setStatus('Subscription Active');
       setUrl('');
     } catch (err) {

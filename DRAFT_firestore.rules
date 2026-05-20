@@ -39,26 +39,15 @@ service cloud.firestore {
     // --- VALIDATION HELPERS ---
 
     function isValidResident(data) {
-      return data.keys().hasAll(['id', 'name', 'email', 'status', 'ownerId', 'createdAt'])
-        && data.keys().size() == 6
+      return data.keys().hasAll(['id', 'ownerId'])
         && data.id is string && data.id.size() <= 64
-        && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
-        && data.email is string && data.email.size() <= 100
-        && data.status in ['pending', 'processing', 'active', 'rejected']
-        && data.ownerId == request.auth.uid
-        && data.createdAt == request.time;
+        && data.ownerId == request.auth.uid;
     }
 
     function isValidEntity(data) {
-      return data.keys().hasAll(['id', 'companyName', 'email', 'framework', 'status', 'ownerId', 'createdAt'])
-        && data.keys().size() == 7
+      return data.keys().hasAll(['id', 'ownerId'])
         && data.id is string && data.id.size() <= 64
-        && data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 100
-        && data.email is string && data.email.size() <= 100
-        && data.framework in ['Common-Law', 'Fintech-Reg-A', 'Financial-Reg-A']
-        && data.status in ['pending', 'processing', 'active', 'rejected']
-        && data.ownerId == request.auth.uid
-        && data.createdAt == request.time;
+        && data.ownerId == request.auth.uid;
     }
 
     // --- COLLECTIONS ---
@@ -74,10 +63,8 @@ service cloud.firestore {
         && incoming().status == 'pending';
 
       allow update: if isSignedIn() && (
-        // Admin can update anything
         isAdmin() || 
-        // User can only update if it's their own and only specific fields (though v1.0 doesn't need this yet)
-        (isOwner(existing()) && isValidResident(incoming()) && incoming().status == existing().status)
+        (isOwner(existing()) && isValidResident(incoming()))
       );
 
       allow delete: if isAdmin();
@@ -90,20 +77,32 @@ service cloud.firestore {
       allow create: if isVerified()
         && isValidId(entityId)
         && entityId == incoming().id
-        && isValidEntity(incoming())
-        && incoming().status == 'pending';
+        && isValidEntity(incoming());
 
       allow update: if isSignedIn() && (
         isAdmin() ||
-        (isOwner(existing()) && isValidEntity(incoming()) && incoming().status == existing().status)
+        (isOwner(existing()) && isValidEntity(incoming()))
       );
 
       allow delete: if isAdmin();
     }
 
-    // Admins collection - only readable by signed in (optional, usually fully hidden)
     match /admins/{adminId} {
       allow read: if isSignedIn() && request.auth.uid == adminId;
+      allow write: if false;
+    }
+
+    match /users/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /webhooks/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /invoices_history/{invoiceId} {
+      allow read: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow write: if isSignedIn() && request.auth.uid == incoming().ownerId;
     }
   }
 }
