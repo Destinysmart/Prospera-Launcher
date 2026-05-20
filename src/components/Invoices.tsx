@@ -38,10 +38,11 @@ export function Invoices({ user, llcId }: InvoicesProps) {
     fetchLlc();
     
     // Invoices History
-    const qInv = query(collection(db, 'invoices_history'), where('llcId', '==', llcId));
+    const qInv = query(collection(db, 'invoices_history'), where('ownerId', '==', user.uid));
     const unsubInv = onSnapshot(qInv, (snapshot) => {
        const invData = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-       setInvoices(invData.sort((a: any, b: any) => b.createdAt - a.createdAt));
+       // Only show invoices for current LLC locally 
+       setInvoices(invData.filter((i: any) => i.llcId === llcId).sort((a: any, b: any) => b.createdAt - a.createdAt));
     });
     
     // Btc Price & Corporate Wallet 
@@ -146,6 +147,7 @@ export function Invoices({ user, llcId }: InvoicesProps) {
               amount,
               currency,
               status: 'unpaid',
+              ownerId: user.uid,
               createdAt: Date.now()
            });
            

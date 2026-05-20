@@ -24,8 +24,11 @@ try {
 }
 
 const app = express();
-// Restrict CORS or use a basic allowlist, although we serve on the same origin typically.
-app.use(cors({ origin: [/.*\.google\.com$/, /.*\.run\.app$/, 'http://localhost:3000'] }));
+const allowedOrigins = ['http://localhost:3000'];
+if (process.env.APP_URL) {
+    allowedOrigins.push(process.env.APP_URL);
+}
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({
   verify: (req: any, res, buf) => {
     req.rawBody = buf.toString();
@@ -229,15 +232,27 @@ app.post('/api/prospera/search-entity', requireAuth, async (req, res) => {
 // LLC - Submit
 app.post('/api/llc/submit', requireAuth, async (req, res) => {
   const { llcData, amount } = req.body;
+  const uid = (req as any).user.uid;
 
   try {
+    let principalOffice = { line1: "123 Main St", city: "Roatan", postalCode: "34101", country: "HN" };
+    try {
+        const residentDoc = await admin.firestore().collection('residents').doc(uid).get();
+        if (residentDoc.exists) {
+            const pData = residentDoc.data()?.prosperaData;
+            if (pData?.address) {
+                principalOffice = pData.address;
+            }
+        }
+    } catch(e) {}
+
     const resp = await fetchFromProspera('/legal_entity_applications', 'POST', {
       applicationData: {
         residencyType: "e-Resident",
         entityType: "llc",
         name: llcData.companyName,
         extension: "LLC",
-        principalOffice: { line1: "123 Main St", city: "Roatan", postalCode: "34101", country: "HN" },
+        principalOffice: principalOffice,
         contactEmail: llcData.email,
         registeredAgentProvider: "prospera_employment_solutions",
         registeredAgentDetails: null
@@ -255,10 +270,29 @@ app.post('/api/llc/submit', requireAuth, async (req, res) => {
 });
 
 app.post('/api/llc/checkout', requireAuth, async (req, res) => {
-   const { applicationId } = req.body;
+   const { applicationId, entityId, email } = req.body;
+   const uid = (req as any).user.uid;
    
    try {
      const checkoutSession = await handleProsperaPayment(applicationId);
+     
+     if (checkoutSession.invoiceId && entityId) {
+         await admin.firestore().collection('invoices_history').doc(checkoutSession.invoiceId).set({
+            id: checkoutSession.invoiceId,
+            entityId: entityId,
+            type: 'llc',
+            amount: 150000,
+            status: checkoutSession.status === 'paid' ? 'paid' : 'pending',
+            paymentRequest: checkoutSession.bolt11 || null,
+            email: email || null,
+            ownerId: uid
+         });
+         
+         await admin.firestore().collection('corporate_entities').doc(entityId).set({
+            status: checkoutSession.status === 'paid' ? 'processing' : 'pending_payment',
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+         }, { merge: true });
+     }
      
      res.json({
       invoiceId: checkoutSession.invoiceId || null,
@@ -282,6 +316,7 @@ app.get('/api/residents/:uid/prospera_status', requireAuth, async (req, res) => 
           try {
               await admin.firestore().collection('residents').doc(uid).set({
                   id: uid,
+                  ownerId: uid,
                   status: 'active',
                   prosperaData: data || null,
                   updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -335,9 +370,33 @@ app.post('/api/webhooks/blink', async (req: any, res) => {
      return res.status(400).json({ error: "Invalid signature" });
   }
 
-  // Webhooks from Blink would be processed here and we'd usually use Admin SDK.
-  // We're stubbing this out since we can no longer use Firebase Admin SDK per instructions.
   console.log("Received Blink webhook event:", evt);
+
+  if (evt.type === 'payment.received' || evt.type === 'receive.payment') {
+      const data = evt.data || evt;
+      const bolt11 = data.paymentRequest || data.bolt11 || data.invoice;
+      if (bolt11) {
+          try {
+              const invoicesRef = admin.firestore().collection('invoices_history');
+              const q = invoicesRef.where('paymentRequest', '==', bolt11).limit(1);
+              const snapshot = await q.get();
+              if (!snapshot.empty) {
+                  const invoiceDoc = snapshot.docs[0];
+                  await invoiceDoc.ref.update({ status: 'paid', updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+                  
+                  const entityId = invoiceDoc.data().entityId;
+                  if (entityId) {
+                      await admin.firestore().collection('corporate_entities').doc(entityId).update({
+                          status: 'processing',
+                          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                      });
+                  }
+              }
+          } catch(e) {
+              console.error("Webhook processing error:", e);
+          }
+      }
+  }
 
   res.sendStatus(200);
 });

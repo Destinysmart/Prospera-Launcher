@@ -145,7 +145,7 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
            'Content-Type': 'application/json',
            'Authorization': `Bearer ${token}`
          },
-         body: JSON.stringify({ applicationId: appId }),
+         body: JSON.stringify({ applicationId: appId, entityId: id, email: formData.email }),
        });
        const data = await res.json();
        
@@ -166,25 +166,6 @@ export function LLCFlow({ onComplete, user }: { onComplete: (id: string) => void
            } catch(e) {}
        }
        
-       if (data.invoiceId) {
-         const { setDoc, updateDoc, doc } = await import('firebase/firestore');
-         const { db } = await import('../services/firebase');
-         await setDoc(doc(db, 'invoices_history', data.invoiceId), {
-            id: data.invoiceId,
-            entityId: id,
-            type: 'llc',
-            amount: 150000,
-            status: data.checkoutStatus === 'paid' ? 'paid' : 'pending',
-            paymentRequest: data.invoice || data.bolt11 || null,
-            email: formData.email || null,
-            ownerId: user.uid || null
-         });
-         
-         await updateDoc(doc(db, 'corporate_entities', id), {
-            status: data.checkoutStatus === 'paid' ? 'processing' : 'pending_payment'
-         });
-       }
-
        if (data.checkoutStatus === 'paid') {
           setStep('portal');
        } else {

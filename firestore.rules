@@ -39,21 +39,26 @@ service cloud.firestore {
     // --- VALIDATION HELPERS ---
 
     function isValidResident(data) {
-      return data.keys().hasAll(['id', 'ownerId'])
+      return data.keys().hasAll(['id', 'ownerId', 'status', 'prosperaData', 'updatedAt'])
         && data.id is string && data.id.size() <= 64
+        && data.status in ['pending', 'processing', 'active', 'rejected', 'loading']
         && data.ownerId == request.auth.uid;
     }
 
     function isValidEntity(data) {
-      return data.keys().hasAll(['id', 'ownerId'])
+      return data.keys().hasAll(['id', 'ownerId', 'status', 'companyName', 'email', 'framework', 'amount', 'updatedAt', 'purpose'])
         && data.id is string && data.id.size() <= 64
+        && data.status in ['pending', 'pending_signature', 'pending_payment', 'processing', 'active', 'rejected']
+        && data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 100
+        && data.framework is string
+        && data.amount is number
         && data.ownerId == request.auth.uid;
     }
 
     // --- COLLECTIONS ---
 
     match /residents/{residentId} {
-      allow get: if isOwner(existing()) || isAdmin();
+      allow get: if isSignedIn() && (request.auth.uid == residentId || (resource != null && resource.data.ownerId == request.auth.uid) || isAdmin());
       allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
       
       allow create: if isVerified() 
@@ -64,24 +69,25 @@ service cloud.firestore {
 
       allow update: if isSignedIn() && (
         isAdmin() || 
-        (isOwner(existing()) && isValidResident(incoming()))
+        (resource != null && resource.data.ownerId == request.auth.uid && isValidResident(incoming()) && incoming().status == existing().status)
       );
 
       allow delete: if isAdmin();
     }
 
     match /corporate_entities/{entityId} {
-      allow get: if isOwner(existing()) || isAdmin();
+      allow get: if isSignedIn() && (resource == null || resource.data.ownerId == request.auth.uid || isAdmin());
       allow list: if isSignedIn() && (resource.data.ownerId == request.auth.uid || isAdmin());
 
       allow create: if isVerified()
         && isValidId(entityId)
         && entityId == incoming().id
-        && isValidEntity(incoming());
+        && isValidEntity(incoming())
+        && incoming().status == 'pending_payment';
 
       allow update: if isSignedIn() && (
         isAdmin() ||
-        (isOwner(existing()) && isValidEntity(incoming()))
+        (resource != null && resource.data.ownerId == request.auth.uid && isValidEntity(incoming()) && incoming().status == existing().status)
       );
 
       allow delete: if isAdmin();
@@ -103,6 +109,10 @@ service cloud.firestore {
     match /invoices_history/{invoiceId} {
       allow read: if isSignedIn() && resource.data.ownerId == request.auth.uid;
       allow write: if isSignedIn() && request.auth.uid == incoming().ownerId;
+    }
+    match /referrals/{referralId} {
+      allow read: if isSignedIn() && resource.data.referrer_id == request.auth.uid;
+      allow write: if false; // Only backend writes referrals
     }
   }
 }

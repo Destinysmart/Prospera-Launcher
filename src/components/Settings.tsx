@@ -268,10 +268,10 @@ export function Settings({ user, residentId }: SettingsProps) {
                   <div className="flex gap-2">
                      <div className="flex-1 flex items-center justify-between p-3 border border-[#141414]/20 bg-gray-50">
                         <span className="font-mono text-sm">••••••••••••••••••••••••••••••••</span>
-                        <div className="text-[10px] uppercase font-bold text-[#141414]/50">Encrypted</div>
+                        <div className="text-[10px] uppercase font-bold text-[#141414]/50">Stored</div>
                      </div>
                   </div>
-                  <p className="text-[10px] font-mono uppercase opacity-60 mt-2">API key is securely encrypted at rest. If you need to change wallets, disconnect and reconnect.</p>
+                  <p className="text-[10px] font-mono uppercase opacity-60 mt-2">API key is stored in your profile to query balances directly from your browser. If you need to change wallets, disconnect and reconnect.</p>
                </div>
 
                <div className="pt-4 mt-4 border-t border-[#141414]/10">
