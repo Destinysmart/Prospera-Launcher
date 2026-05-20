@@ -1,0 +1,43 @@
+{
+  "entities": {
+    "resident": {
+      "title": "Resident",
+      "description": "Próspera ZEDE e-Resident entity",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "passport": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "processing", "active", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "status"]
+    },
+    "corporate_entity": {
+      "title": "Corporate Entity",
+      "description": "Próspera ZEDE corporate entity (LLC)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyName": { "type": "string" },
+        "email": { "type": "string" },
+        "framework": { "type": "string" },
+        "purpose": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "processing", "active", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "companyName", "email", "status"]
+    }
+  },
+  "firestore": {
+    "residents": {
+      "schema": "resident",
+      "description": "Collection of e-Residents"
+    },
+    "corporate_entities": {
+      "schema": "corporate_entity",
+      "description": "Collection of LLCs and other corporate entities"
+    }
+  }
+}
